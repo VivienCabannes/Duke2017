@@ -7,7 +7,7 @@ import numpy as np
 from models import DetectionClassifier, dual_score, cross_evaluation
 from models import Classifier, dual_score_detection, cross_evaluation_detection
 from design_processing import get_standard_design, normalize_design
-from design_processing import ind_selection, fast_ind_selection
+from design_processing import ind_selection
 from helper import save_variables, load_variables
 
 from models import SparseClassifier, SPARSE_CLASSIFIER_HYPER
@@ -45,18 +45,18 @@ for trial in to_try:
         print('here')
         met.set_parameter(para)
         cl = Classifier(met, ind_sel_func = ind_selection)
-        res, abst = dual_score(met, design, labels, nb_try = NB)
-        res2 = []
-        for i in range(10):
-            tmp = cross_evaluation(met, design, labels)
-            res2.append(tmp)
-        res2 = np.mean(res2)
-        good.append([res, abst, res2, met, para])
-        
-        tmp = res*(1-abst) + res2
-        if tmp > best:
-            best = tmp            
-            print('met', res, abst, res2, met, para)
+#        res, abst = dual_score(met, design, labels, nb_try = NB)
+#        res2 = []
+#        for i in range(10):
+#            tmp = cross_evaluation(met, design, labels)
+#            res2.append(tmp)
+#        res2 = np.mean(res2)
+#        good.append([res, abst, res2, met, para])
+#        
+#        tmp = res*(1-abst) + res2
+#        if tmp > best:
+#            best = tmp            
+#            print('met', res, abst, res2, met, para)
             
         res, abst = dual_score(cl, design, labels, nb_try = NB)
         res2 = []
@@ -73,25 +73,26 @@ for trial in to_try:
 
 met = DetectionModel()
 for para in DETECTION_MODEL_HYPER:
-    print('here')
     met.set_parameter(para)
-    res, abst = dual_score(met, prob_design, labels, nb_try = NB)
+    cl = DetectionClassifier(met, ind_sel_func = ind_selection)
+#    res, abst = dual_score(met, prob_design, labels, nb_try = NB)
+#    res2 = []
+#    for i in range(10):
+#        tmp = cross_evaluation(met, design, labels)
+#        res2.append(tmp)
+#    res2 = np.mean(res2)
+#    good.append([res, abst, res2, 'Detection'])
+#
+#    tmp = res*(1-abst) + res2
+#    if tmp > best:
+#        best = tmp            
+#        print('met', res, abst, res2, 'Detection')
+
+    res, abst = dual_score_detection(cl, design, prob_design, labels, 
+                                     nb_try = NB)
     res2 = []
     for i in range(10):
-        tmp = cross_evaluation(met, design, labels)
-        res2.append(tmp)
-    res2 = np.mean(res2)
-    good.append([res, abst, res2, 'Detection'])
-
-    tmp = res*(1-abst) + res2
-    if tmp > best:
-        best = tmp            
-        print('met', res, abst, res2, 'Detection')
-
-    res, abst = dual_score(cl, prob_design, labels, nb_try = NB)
-    res2 = []
-    for i in range(10):
-        tmp = cross_evaluation(cl, design, labels)
+        tmp = cross_evaluation_detection(cl, design, prob_design, labels)
         res2.append(tmp)
     res2 = np.mean(res2)
     good_cl.append([res, abst, res2, 'Detection'])
