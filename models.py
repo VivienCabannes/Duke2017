@@ -1234,12 +1234,12 @@ GENERATIVE_MODEL_HYPER = [[t] for t in Thr]
 class DetectionModel:
     def __init__(self, phi_func = None, psi_func = None):
         if phi_func is None:
-            self.phi = lambda x: x**(-1)
+            self.phi = lambda x: (x ** (-1))
         else:
             self.phi = phi_func
         if psi_func is None:
-             self.psi = lambda x: (x < .1).astype(np.int)
-#            self.psi = lambda x: (x < .05).astype(np.int) * (x ** (-1))
+#            self.psi = lambda x: (x < .1).astype(np.int)
+            self.psi = lambda x: (x < .05).astype(np.int) * (x ** (-1))
         else:
             self.psi = psi_func
     
@@ -1265,7 +1265,7 @@ class DetectionModel:
     def evaluate(self, x_test, y_test):
         soft_pred = self.predict(x_test)
         return AUC(soft_pred, y_test)
-
+    
 psi1 = lambda x: (x < .1).astype(np.int)
 psi2 = lambda x: (x < .05).astype(np.int) * (x ** (-1))
 Psi = [psi1, psi2]
@@ -1493,9 +1493,43 @@ def cross_validation_LOFO(method, parameter_list, design, labels,
         return best_parameter
     
 """
+-------------------------- Discriminating Two Childs --------------------------
+"""    
+def dual_score(method, design, labels, nb_try = 100, verbose = False):
+    ind = np.arange(len(labels))
+    ind_aut = ind[labels == 1]
+    ind_nor = ind[labels == -1]
+    couples = np.random.permutation([[i, j] for i in ind_aut for j in ind_nor])
+    if nb_try is None:
+        nb_try = len(couples)
+    res = []
+    for i in range(nb_try):
+        couple = couples[i]
+        aut_ind, nor_ind = couple[0], couple[1]
+        ind_test = (ind == aut_ind) + (ind == nor_ind)
+        ind_train = np.invert(ind_test)
+        train_data = design[ind_train]
+        train_labels = labels[ind_train]
+        test_data = design[ind_test]
+        test_labels = labels[ind_test]
+        method.fit(train_data, train_labels)
+        pred = method.predict(test_data)
+        comp = pred[test_labels==1] - pred[test_labels==-1]
+        if comp > 0:
+            res.append(1)
+        elif comp == 0:
+            res.append(np.nan)
+        else:
+            res.append(0)
+    res = np.array(res)
+    if verbose:
+        return res
+    return np.mean(res[np.invert(np.isnan(res))]), np.mean(np.isnan(res))
+    
+"""
 ---------------------------- Classifier Structure -----------------------------
 """
-class classifier:
+class Classifier:
     def __init__(self, method, ind_sel_func = None, parameter_list = None, 
                  evaluation = None, nb_folds = 6):
         self.method = method
@@ -1538,24 +1572,73 @@ class classifier:
         return AUC(soft_pred, labels)
 
 """
--------------------------- Discriminating Two Childs --------------------------
+----------------------------- Detection Framework -----------------------------
 """
+class DetectionClassifier:
+    def __init__(self, method, ind_sel_func = None, parameter_list = None, 
+                 evaluation = None, nb_folds = 6):
+        self.method = method
+        self.ind_sel_func = ind_sel_func
+        self.eval = evaluation
+        self.nb_folds = nb_folds
+    
+    def set_parameter(self, parameter):
+        """
+        selection_func, opt: nb folds, evaluation_function
+        """
+        self.ind_sel_func = parameter[0]
+        if len(parameter) > 1:
+            self.nb_folds = parameter[1]
+        if len(parameter) > 2:
+            self.eval = parameter[2]
+        
+    def fit(self, design, proba_design, labels):
+        if not self.ind_sel_func is None:
+            self.ind = self.ind_sel_func(design, labels)
+        else:
+            self.ind = np.ones(design.shape[1]) == 0
+        X = proba_design[:,self.ind]
+        self.method.fit(X, labels)
+        
+    def predict(self, proba_design):
+        X = proba_design[:,self.ind]
+        soft_pred = self.method.predict(X)
+        return soft_pred
 
-class Trivial:
-    def __init__(self):
-        pass
+    def evaluate(self, proba_design, labels):
+        soft_pred = self.predict(proba_design)
+        return AUC(soft_pred, labels)
     
-    def fit(self, design, labels):
-        pass
-    
-    def predict(self, design):
-        return design[:,0]
-    
-    def evaluate(self, design, labels):
-        pred = self.predict(design)
-        return AUC(pred, labels)
-    
-def dual_score(method, design, labels, nb_try = 100, verbose = False):
+def cross_evaluation_detection(method, design, proba_design, labels, 
+                               evaluation = None, folds = None, nb_folds = 8, 
+                               verbose = False):
+    if folds is None:
+        folds = Folds_Cut(nb_folds)
+        folds.design_fold(labels)
+    else:
+        nb_folds = folds.nb_folds
+    res = np.zeros(nb_folds)
+    for k in range(nb_folds):
+        ind_train, ind_val = folds.next_fold()
+        train_data = design[ind_train]
+        proba_train_data = proba_design[ind_train]
+        train_labels = labels[ind_train]
+        proba_val_data = proba_design[ind_val]
+        val_labels = labels[ind_val]
+        method.fit(train_data, proba_train_data, train_labels)
+        if evaluation is None:
+            res[k] = method.evaluate(proba_val_data, val_labels)
+            y_pred = method.predict(proba_val_data)
+        else:
+            y_pred = method.predict(proba_val_data)
+            res[k] = evaluation(y_pred, val_labels)
+    if verbose:
+        return res
+    else:
+        return np.mean(res)
+
+def dual_score_detection(method, design, proba_design, labels, 
+                         nb_try = 100, verbose = False):
     ind = np.arange(len(labels))
     ind_aut = ind[labels == 1]
     ind_nor = ind[labels == -1]
@@ -1569,11 +1652,12 @@ def dual_score(method, design, labels, nb_try = 100, verbose = False):
         ind_test = (ind == aut_ind) + (ind == nor_ind)
         ind_train = np.invert(ind_test)
         train_data = design[ind_train]
+        proba_train_data = proba_design[ind_train]
         train_labels = labels[ind_train]
-        test_data = design[ind_test]
+        proba_test_data = proba_design[ind_test]
         test_labels = labels[ind_test]
-        method.fit(train_data, train_labels)
-        pred = method.predict(test_data)
+        method.fit(train_data, proba_train_data, train_labels)
+        pred = method.predict(proba_test_data)
         comp = pred[test_labels==1] - pred[test_labels==-1]
         if comp > 0:
             res.append(1)
@@ -1584,9 +1668,8 @@ def dual_score(method, design, labels, nb_try = 100, verbose = False):
     res = np.array(res)
     if verbose:
         return res
-    return np.mean(res[np.invert(np.isnan(res))])
-
-
+    return np.mean(res[np.invert(np.isnan(res))]), np.mean(np.isnan(res))
+    
 """
 ------------------------------ Find Best Methods ------------------------------
 """
@@ -1617,14 +1700,14 @@ def find_AUC_method(design, proba_design, labels, perf = .8, nb_folds = 5):
             met.set_parameter(para)
             res = cross_evaluation(met, proba_design,labels, nb_folds=nb_folds)
             if res > perf:
-                good.append([res, met, [None]])
+                good.append([res, 'detection'])
         except:
             continue
     return good
 
 def find_dual_method(design, proba_design, labels, perf = .8, nb_try = 50):
     to_try = [[SparseClassifier(), SPARSE_CLASSIFIER_HYPER],
-              [MatchingPursuit(), MATCHING_PURSUIT_HYPER],
+#              [MatchingPursuit(), MATCHING_PURSUIT_HYPER],
               [FeatureElimination(), FEATURE_ELIMINATION_HYPER],
               [Svm(), SVM_HYPER],
               [NearestNeighbors(), NEAREST_NEIGHBORS_HYPER],
@@ -1637,10 +1720,9 @@ def find_dual_method(design, proba_design, labels, perf = .8, nb_try = 50):
         for para in hyper:
             try:
                 met.set_parameter(para)
-                res = dual_score(met, design, labels, nb_try = nb_try)
+                res, res2 = dual_score(met, design, labels, nb_try = nb_try)
                 if res > perf:
-                    good.append([res, met, para])
-                    print(good[-1])
+                    good.append([res, res2, met, para])
             except:
                 continue
     met = DetectionModel()
@@ -1648,10 +1730,39 @@ def find_dual_method(design, proba_design, labels, perf = .8, nb_try = 50):
     for para in hyper:
         try:
             met.set_parameter(para)
-            res = dual_score(met, design, labels, nb_try = nb_try)
+            res, res2 = dual_score(met, design, labels, nb_try = nb_try)
             if res > perf:
-                good.append([res, met, [None]])
+                good.append([res, res2, 'Detection'])
         except:
             continue
     return good
 
+if __name__ == "__main__":
+    aut = [4,2,21,17,12,6,10,10,4,14]
+    nor = [56,27,6,4,4,1,1,0,0,1]
+    
+    np.sum(aut)
+    np.sum(nor)
+    
+    design_aut = np.array([ i  for i in range(10) for k in range(aut[i]) ]) 
+    design_nor = np.array([ i  for i in range(10) for k in range(nor[i]) ]) 
+    
+    design = np.hstack((design_aut, design_nor))
+    labels = np.hstack((np.ones(100), -np.ones(100)))
+    
+    class Trivial:
+        def __init__(self):
+            pass
+        
+        def fit(self, design, labels):
+            pass
+        
+        def predict(self, design):
+            return design
+        
+        def evaluate(self, design, labels):
+            soft_pred = self.predict(design)
+            return AUC(soft_pred, labels)
+        
+    res = dual_score(Trivial(), design, labels)
+    print(res)

@@ -138,6 +138,21 @@ def ind_sort_design(design, labels):
     ind = np.argsort(score)[::-1]
     return ind
 
+def fast_ind_sort_selection(design, labels, thres = .21):
+    ind = np.argsort(design, axis=0)
+    order = labels[ind] == 1
+    extremity = int(design.shape[0]/10)
+    pos_begin = np.mean(order[:extremity], axis = 0)
+    pos_end = np.mean(order[-extremity:], axis = 0)
+    tmp = pos_begin > pos_end
+    score = pos_end
+    score[tmp] = pos_begin[tmp]
+    score = np.abs(score - np.median(score))
+    ind = np.argsort(score)[::-1]
+    cut = len(ind) - np.sum(score < thres) 
+    ind = ind[:cut]
+    return ind
+
 def ind_linear_independent(sorted_design, cor_thres = .5, reduct = 1):
     X = np.copy(sorted_design)
     X -= np.mean(X, axis=0)
@@ -184,6 +199,10 @@ def ind_selection(design, labels, cor_thres = .5, reduct = 1):
     ind = ind_1[ind_2]
     return ind
 
+def fast_ind_selection(design, labels, N = 1000):
+    ind = ind_sort_design(design, labels)
+    return ind[:N]
+
 def preprocess_design(design, labels, explanation = None, cor_thres = .5,
                       reduct = 1):
     ind = ind_selection(design, labels, cor_thres = cor_thres, reduct = reduct)
@@ -198,6 +217,22 @@ def get_preprocess_design(name):
     except FileNotFoundError:
         design, labels, ids, explanation = get_design(name)
         design, explanation = preprocess_design(design, labels, explanation)
+        save_variables(save_name, [design, labels, ids, explanation])
+    return design, labels, ids, np.array(explanation)
+
+def small_design(design, labels, explanation = None):
+    ind = fast_ind_sort_selection(design, labels)
+    if not explanation is None:
+        return design[:,ind], np.array(explanation)[ind]
+    return design[:,ind]
+
+def get_small_design(name):
+    save_name = 'small_design_' + name
+    try:
+        design, labels, ids, explanation = load_variables(save_name)
+    except FileNotFoundError:
+        design, labels, ids, explanation = get_design(name)
+        design, explanation = small_design(design, labels, explanation)
         save_variables(save_name, [design, labels, ids, explanation])
     return design, labels, ids, np.array(explanation)
 
@@ -233,29 +268,58 @@ def concatenate_design(designs, explanations):
             design = np.copy(designs[i])
         else:
             design = np.hstack((design, designs[i]))
-        explanation += explanations[i]
-    return design, explanation
+        explanation += list(explanations[i])
+    return design, np.array(explanation)
 
-def get_standard_design(preprocess = True):
+def get_standard_design(preprocess = False, proba = False, small = False):
     save_name = 'st_design'
-    if not preprocess:
-        save_name = save_name + '_all'
-    try:
-        design, labels, ids, explanation = load_variables(save_name)
-    except FileNotFoundError:
-        names = ['face_parameterization', 'first_layer', 
-                 'second_layer', 'histogram', 'motor_behaviors']
-        designs, explanations = [], []
-        for name in names:
-            print(name)
-            design, labels, ids, explanation = get_design(name)
-            designs.append(design)
-            explanations.append(explanation)
-        design, explanation = concatenate_design(designs, explanations)
+    if proba:
         if preprocess:
-            design, explanation = preprocess_design(design,labels,explanation)
-        save_variables(save_name, [design, labels, ids, explanation])
-    return design, labels, ids, np.array(explanation)
+            save_name = 'st_design_proba'
+        elif small:
+            save_name = 'small_st_design_proba'
+        else:
+            save_name = 'st_design_all_proba'
+        try:
+            design, labels, ids, explanation = load_variables(save_name)
+        except FileNotFoundError:
+            design, labels, ids, explanation = get_standard_design(
+                    preprocess = preprocess, proba = False, small = small)
+            design = proba_design(design)
+            save_variables(save_name, [design, labels, ids, explanation])
+    else:
+        if preprocess:
+            save_name = 'st_design'
+            try:
+                design, labels, ids, explanation = load_variables(save_name)
+            except FileNotFoundError:
+                design, labels, ids, explanation = get_standard_design(
+                        preprocess = False, proba = False, small = False)
+                design,explanation=preprocess_design(design,labels,explanation)
+                save_variables(save_name, [design, labels, ids, explanation])            
+        elif small:
+            save_name = 'small_st_design'
+            try:
+                design, labels, ids, explanation = load_variables(save_name)
+            except FileNotFoundError:
+                design, labels, ids, explanation = get_standard_design(
+                        preprocess = False, proba = False, small = False)
+                design, explanation = small_design(design, labels, explanation)
+                save_variables(save_name, [design, labels, ids, explanation])
+        else:
+            save_name = 'st_design_all'
+            try:
+                design, labels, ids, explanation = load_variables(save_name)
+            except FileNotFoundError:
+                names = ['second_layer', 'motor_behaviors']
+                designs, explanations = [], []
+                for name in names:
+                    design, labels, ids, explanation = get_design(name)
+                    designs.append(design)
+                    explanations.append(explanation)
+                design, explanation = concatenate_design(designs, explanations)
+                save_variables(save_name, [design, labels, ids, explanation])
+    return design, labels, ids, explanation
 
 """
 ----------------------------------- Helper ------------------------------------
@@ -331,6 +395,11 @@ def compute_all_data():
         print(name)
         get_preprocess_design(name)
         get_proba_design(name)
+    print('standard_design')
+    for proba in [False, True]:
+        for preprocess in [False, True]:
+            get_standard_design(preprocess=preprocess, proba=proba)
+
         
 if __name__=='__main__':
     compute_all_data()
